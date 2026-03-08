@@ -1,53 +1,55 @@
 import cv2
 import mediapipe as mp
+from mediapipe.tasks import python
+from mediapipe.tasks.python import vision
 import numpy as np
-import subprocess
 import time
 import random
+import pygame
 from collections import deque
 
-mp_face_mesh = mp.solutions.face_mesh
-face_mesh = mp_face_mesh.FaceMesh(refine_landmarks=True)
+# --- Ses Sistemi Başlatma ---
+pygame.mixer.init()
+
+def play_sound():
+    # Ses dosyasını yükle ve döngüye al (-1 değeri sonsuz döngü demektir)
+    pygame.mixer.music.load("utkucann.mp3")
+    pygame.mixer.music.play(loops=-1)
+
+def stop_sound():
+    pygame.mixer.music.stop()
+
+# --- Modern Tasks API Kurulumu ---
+base_options = python.BaseOptions(model_asset_path='face_landmarker.task')
+options = vision.FaceLandmarkerOptions(
+    base_options=base_options,
+    output_face_blendshapes=False,
+    num_faces=1)
+detector = vision.FaceLandmarker.create_from_options(options)
 
 cap = cv2.VideoCapture(0)
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
 
 LEFT_IRIS = [474,475,476,477]
 RIGHT_IRIS = [469,470,471,472]
-
 LEFT_EYE = [33,133]
 RIGHT_EYE = [362,263]
-
 LEFT_EYE_BOX = [33,160,158,133,153,144]
 RIGHT_EYE_BOX = [362,385,387,263,373,380]
 
 history = deque(maxlen=10)
-
 playing = False
 not_looking_start = None
-audio_process = None
-
-def play_sound():
-    global audio_process
-    audio_process = subprocess.Popen(["afplay", "utkucann.mp3"])
-
-
-def stop_sound():
-    global audio_process
-    if audio_process is not None:
-        audio_process.terminate()
-        audio_process = None
-
 
 def get_center(points, landmarks, w, h):
-    coords = [(int(landmarks[p].x*w), int(landmarks[p].y*h)) for p in points]
+    coords = [(int(landmarks[p].x * w), int(landmarks[p].y * h)) for p in points]
     x = int(np.mean([p[0] for p in coords]))
     y = int(np.mean([p[1] for p in coords]))
-    return (x,y)
-
+    return (x, y)
 
 def get_point(index, landmarks, w, h):
-    return (int(landmarks[index].x*w), int(landmarks[index].y*h))
-
+    return (int(landmarks[index].x * w), int(landmarks[index].y * h))
 
 def draw_eye_box(indices, landmarks, frame, w, h):
     points = [(int(landmarks[i].x*w), int(landmarks[i].y*h)) for i in indices]
@@ -87,31 +89,27 @@ def draw_gaze_line(iris, eye_left, eye_right, frame, color):
 
     return end_point
 
-
-while True: # Uygulamayi kapatana kadar calistir.
+while True:
     ret, frame = cap.read()
     if not ret:
         break
+    h, w, _ = frame.shape
 
-    h,w,_ = frame.shape
-
-    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    results = face_mesh.process(rgb)
+    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+    results = detector.detect(mp_image)
 
     looking = False
 
-    if results.multi_face_landmarks:
-        landmarks = results.multi_face_landmarks[0].landmark
-
+    if results.face_landmarks:
+        landmarks = results.face_landmarks[0]
+        
         draw_eye_box(LEFT_EYE_BOX, landmarks, frame, w, h)
         draw_eye_box(RIGHT_EYE_BOX, landmarks, frame, w, h)
 
         left_iris = get_center(LEFT_IRIS, landmarks, w, h)
         right_iris = get_center(RIGHT_IRIS, landmarks, w, h)
-
         left_eye_l = get_point(LEFT_EYE[0], landmarks, w, h)
         left_eye_r = get_point(LEFT_EYE[1], landmarks, w, h)
-
         right_eye_l = get_point(RIGHT_EYE[0], landmarks, w, h)
         right_eye_r = get_point(RIGHT_EYE[1], landmarks, w, h)
 
@@ -131,17 +129,12 @@ while True: # Uygulamayi kapatana kadar calistir.
         nose = get_point(1, landmarks, w, h)
         left_face = get_point(234, landmarks, w, h)
         right_face = get_point(454, landmarks, w, h)
-
         face_width = right_face[0] - left_face[0]
         nose_offset = (nose[0] - (left_face[0]+face_width/2)) / face_width
 
         score = abs(gaze_ratio-0.5) + abs(nose_offset)
-
         history.append(score)
-        smooth_score = np.mean(history)
-
-        if smooth_score < 0.4: # Takip hassasiyeti üstünde oynanabilir.
-            looking = True
+        if np.mean(history) < 0.4: looking = True
 
     if not looking:
         if not_looking_start is None:
@@ -159,9 +152,8 @@ while True: # Uygulamayi kapatana kadar calistir.
             stop_sound()
             playing = False
 
-
     if playing:
-        text = "YINE DDDEE ASK BOYUN EEEGMEEEZZZ"
+        text = "YINE DDDEE ASK BOYUN EEEGGMEEEZZZ"
         mid_x = int((left_iris[0] + right_iris[0]) / 2)
         mid_y = int((left_iris[1] + right_iris[1]) / 2) - 30
         shake_x = random.randint(-10,10)
