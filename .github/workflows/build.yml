@@ -15,7 +15,7 @@ jobs:
           python-version: "3.11"
 
       - run: pip install pyinstaller mediapipe opencv-python numpy
-      - run: pyinstaller --windowed --add-data "utkucann.mp3:." focus_tracker.py
+      - run: pyinstaller --windowed --add-data "utkucann.mp3:." focus-tracker.py
 
       - uses: actions/upload-artifact@v4
         with:
