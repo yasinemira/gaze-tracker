@@ -1,0 +1,205 @@
+import cv2
+import mediapipe as mp
+import numpy as np
+import subprocess
+import time
+import random
+from collections import deque
+
+mp_face_mesh = mp.solutions.face_mesh
+face_mesh = mp_face_mesh.FaceMesh(refine_landmarks=True)
+
+cap = cv2.VideoCapture(0)
+
+LEFT_IRIS = [474,475,476,477]
+RIGHT_IRIS = [469,470,471,472]
+
+LEFT_EYE = [33,133]
+RIGHT_EYE = [362,263]
+
+LEFT_EYE_BOX = [33,160,158,133,153,144]
+RIGHT_EYE_BOX = [362,385,387,263,373,380]
+
+history = deque(maxlen=10)
+
+playing = False
+not_looking_start = None
+audio_process = None
+
+
+def play_sound():
+    global audio_process
+    audio_process = subprocess.Popen(["afplay", "/Users/Emir/Downloads/utkucann.mp3"])
+
+
+def stop_sound():
+    global audio_process
+    if audio_process is not None:
+        audio_process.terminate()
+        audio_process = None
+
+
+def get_center(points, landmarks, w, h):
+    coords = [(int(landmarks[p].x*w), int(landmarks[p].y*h)) for p in points]
+    x = int(np.mean([p[0] for p in coords]))
+    y = int(np.mean([p[1] for p in coords]))
+    return (x,y)
+
+
+def get_point(index, landmarks, w, h):
+    return (int(landmarks[index].x*w), int(landmarks[index].y*h))
+
+
+def draw_eye_box(indices, landmarks, frame, w, h):
+    points = [(int(landmarks[i].x*w), int(landmarks[i].y*h)) for i in indices]
+    x_coords = [p[0] for p in points]
+    y_coords = [p[1] for p in points]
+
+    x_min, x_max = min(x_coords), max(x_coords)
+    y_min, y_max = min(y_coords), max(y_coords)
+
+    padding = 10
+
+    cv2.rectangle(
+        frame,
+        (x_min-padding, y_min-padding),
+        (x_max+padding, y_max+padding),
+        (0,255,0),
+        2
+    )
+
+
+def draw_gaze_line(iris, eye_left, eye_right, frame, color):
+
+    eye_center = (
+        int((eye_left[0] + eye_right[0]) / 2),
+        int((eye_left[1] + eye_right[1]) / 2)
+    )
+
+    dx = iris[0] - eye_center[0]
+    dy = iris[1] - eye_center[1]
+
+    scale = 10
+
+    end_point = (
+        int(iris[0] + dx*scale),
+        int(iris[1] + dy*scale)
+    )
+
+    cv2.line(frame, iris, end_point, color, 6)
+
+    return end_point
+
+
+while True:
+
+    ret, frame = cap.read()
+    if not ret:
+        break
+
+    h,w,_ = frame.shape
+
+    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    results = face_mesh.process(rgb)
+
+    looking = False
+
+    if results.multi_face_landmarks:
+
+        landmarks = results.multi_face_landmarks[0].landmark
+
+        draw_eye_box(LEFT_EYE_BOX, landmarks, frame, w, h)
+        draw_eye_box(RIGHT_EYE_BOX, landmarks, frame, w, h)
+
+        left_iris = get_center(LEFT_IRIS, landmarks, w, h)
+        right_iris = get_center(RIGHT_IRIS, landmarks, w, h)
+
+        left_eye_l = get_point(LEFT_EYE[0], landmarks, w, h)
+        left_eye_r = get_point(LEFT_EYE[1], landmarks, w, h)
+
+        right_eye_l = get_point(RIGHT_EYE[0], landmarks, w, h)
+        right_eye_r = get_point(RIGHT_EYE[1], landmarks, w, h)
+
+        cv2.circle(frame, left_iris, 4, (255,0,0), -1)
+        cv2.circle(frame, right_iris, 4, (255,0,0), -1)
+
+        line_color = (0,0,255) if playing else (255,0,0)
+
+        left_end = draw_gaze_line(left_iris, left_eye_l, left_eye_r, frame, line_color)
+        right_end = draw_gaze_line(right_iris, right_eye_l, right_eye_r, frame, line_color)
+
+        left_ratio = (left_iris[0]-left_eye_l[0])/(left_eye_r[0]-left_eye_l[0])
+        right_ratio = (right_iris[0]-right_eye_l[0])/(right_eye_r[0]-right_eye_l[0])
+
+        gaze_ratio = (left_ratio + right_ratio)/2
+
+        nose = get_point(1, landmarks, w, h)
+        left_face = get_point(234, landmarks, w, h)
+        right_face = get_point(454, landmarks, w, h)
+
+        face_width = right_face[0] - left_face[0]
+        nose_offset = (nose[0] - (left_face[0]+face_width/2)) / face_width
+
+        score = abs(gaze_ratio-0.5) + abs(nose_offset)
+
+        history.append(score)
+        smooth_score = np.mean(history)
+
+        if smooth_score < 0.4:
+            looking = True
+
+    if not looking:
+
+        if not_looking_start is None:
+            not_looking_start = time.time()
+
+        elapsed = time.time() - not_looking_start
+
+        if elapsed > 1.5:
+
+            if not playing:
+                play_sound()
+                playing = True
+
+    else:
+
+        not_looking_start = None
+
+        if playing:
+            stop_sound()
+            playing = False
+
+
+    if playing:
+
+        text = "YINE DDDEE ASK BOYUN EEEGMEEEZZZ"
+
+        mid_x = int((left_iris[0] + right_iris[0]) / 2)
+        mid_y = int((left_iris[1] + right_iris[1]) / 2) - 30
+
+        shake_x = random.randint(-10,10)
+        shake_y = random.randint(-10,10)
+
+        cv2.putText(
+            frame,
+            text,
+            (mid_x-250+shake_x, mid_y+shake_y),
+            cv2.FONT_HERSHEY_DUPLEX,
+            1.2,
+            (0,0,255),
+            4
+        )
+
+    else:
+
+        cv2.putText(frame,"OK",(30,50),
+                    cv2.FONT_HERSHEY_SIMPLEX,1,(0,255,0),2)
+
+    cv2.imshow("Focus Tracker",frame)
+
+    if cv2.waitKey(1) & 0xFF == 27:
+        break
+
+
+cap.release()
+cv2.destroyAllWindows()
