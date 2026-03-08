@@ -1,2 +1,9 @@
 *.exe
-**/.DS_Store
+*.app
+
+build/
+dist/
+__pycache__/
+*.spec
+
+.DS_Store
